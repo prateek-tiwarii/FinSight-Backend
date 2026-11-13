@@ -4,11 +4,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ValidationError
 
 from app.agents.tools import MARKET_ANALYST_TOOLS
-from app.core.config import settings
+from app.core.llm import build_chat_model, log_llm_response
 from app.models.agent import MarketAnalystFindings
 from app.models.analysis import ConfirmedHolding
 from app.services.portfolio_analytics import analyze_portfolio
@@ -128,13 +127,7 @@ def portfolio_analysis_node(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_llm(with_tools: bool = True):
-    if not settings.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not configured")
-    llm = ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
-        google_api_key=settings.google_api_key,
-        temperature=0,
-    )
+    llm = build_chat_model(temperature=0)
     if with_tools:
         return llm.bind_tools(MARKET_ANALYST_TOOLS)
     return llm
@@ -281,6 +274,7 @@ def market_analyst_node(state: dict[str, Any]) -> dict[str, Any]:
             ]
 
         response = llm.invoke(msgs)
+        log_llm_response("market_analyst", response)
         updates: dict[str, Any] = {"agent_messages": [response], "analysis_status": "analyzing"}
         if new_summaries:
             updates["tool_execution_summaries"] = new_summaries

@@ -3,11 +3,10 @@ import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ValidationError
 
 from app.agents.tools import RESEARCH_TOOLS
-from app.core.config import settings
+from app.core.llm import build_chat_model, log_llm_response
 from app.models.agent import ResearchFindings
 
 logger = logging.getLogger(__name__)
@@ -67,13 +66,7 @@ If evidence is insufficient, reflect that in warnings/notes and avoid unsupporte
 
 
 def _build_llm(with_tools: bool = True):
-    if not settings.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not configured")
-    llm = ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
-        google_api_key=settings.google_api_key,
-        temperature=0,
-    )
+    llm = build_chat_model(temperature=0)
     if with_tools:
         return llm.bind_tools(RESEARCH_TOOLS)
     return llm
@@ -229,6 +222,7 @@ def research_agent_node(state: dict[str, Any]) -> dict[str, Any]:
             ]
 
         response = llm.invoke(msgs)
+        log_llm_response("research_agent", response)
         updates["research_messages"] = [response]
         updates.setdefault("research_status", "researching")
 

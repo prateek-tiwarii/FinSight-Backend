@@ -7,6 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_principal
 from app.core.config import settings
+from app.core.llm import (
+    LLMAuthError,
+    LLMBillingError,
+    LLMModelUnavailableError,
+    LLMProviderError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    get_llm_info,
+)
 from app.db.session import get_db
 from app.graph.workflow import get_analysis_state, resume_agent_analysis, run_agent_analysis
 from app.models.agent import (
@@ -43,6 +52,19 @@ logger = logging.getLogger(__name__)
 ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 
 
+def _llm_http_status(error: LLMProviderError) -> tuple[int, str]:
+    """Map a normalized LLM provider error to an honest HTTP status/detail."""
+    if isinstance(error, LLMRateLimitError):
+        return 429, "The AI provider is rate-limited right now. Please retry in a few moments."
+    if isinstance(error, LLMTimeoutError):
+        return 504, "The AI provider did not respond in time. Please retry."
+    if isinstance(error, (LLMAuthError, LLMBillingError)):
+        return 502, "The AI provider is not correctly configured (credentials or billing)."
+    if isinstance(error, LLMModelUnavailableError):
+        return 503, "The configured AI model is temporarily unavailable. Please retry shortly."
+    return 502, "The AI provider failed to process the request."
+
+
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -69,9 +91,20 @@ async def extract_portfolio(file: UploadFile = File(...)) -> PortfolioExtraction
     service = PortfolioExtractionService()
     try:
         result = await service.extract(contents, file.content_type or "image/png")
+    except LLMProviderError as exc:
+        status, detail = _llm_http_status(exc)
+        logger.warning(
+            "Portfolio extraction provider error (%s, provider=%s model=%s): %s",
+            status,
+            get_llm_info().provider,
+            get_llm_info().model,
+            exc,
+        )
+        raise HTTPException(status_code=status, detail=detail) from exc
     except ExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception:
+        logger.exception("Unexpected portfolio extraction failure")
         raise HTTPException(status_code=502, detail="Failed to extract portfolio from image.")
 
     return result
@@ -336,6 +369,13 @@ async def agent_analyze_endpoint(
         final_state = run_agent_analysis(initial_state, thread_id=thread_id)
     except Exception as exc:
         # Graph failed entirely; try to return deterministic metrics if possible
+        provider_error = exc if isinstance(exc, LLMProviderError) else None
+        logger.warning(
+            "Agent workflow failed (provider=%s model=%s): %s",
+            get_llm_info().provider,
+            get_llm_info().model,
+            exc,
+        )
         try:
             metrics = analyze_portfolio(
                 holdings=payload.holdings,
@@ -364,6 +404,9 @@ async def agent_analyze_endpoint(
             )
             return _persist_response(db, principal, fallback, run, pre_q)
         except Exception:
+            if provider_error is not None:
+                status, detail = _llm_http_status(provider_error)
+                raise HTTPException(status_code=status, detail=detail) from exc
             raise HTTPException(status_code=502, detail="Agent analysis failed.")
 
     response = _build_agent_response(final_state, thread_id=thread_id)

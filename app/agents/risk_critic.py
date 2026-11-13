@@ -3,10 +3,9 @@ import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ValidationError
 
-from app.core.config import settings
+from app.core.llm import build_chat_model, log_llm_response
 from app.models.agent import RiskCriticFindings
 
 logger = logging.getLogger(__name__)
@@ -49,13 +48,7 @@ OUTPUT: Return ONLY a single JSON object (no markdown fences) matching:
 
 
 def _build_llm():
-    if not settings.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is not configured")
-    return ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
-        google_api_key=settings.google_api_key,
-        temperature=0,
-    )
+    return build_chat_model(temperature=0)
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -136,6 +129,7 @@ def risk_critic_node(state: dict[str, Any]) -> dict[str, Any]:
             )),
         ]
         resp = llm.invoke(msgs)
+        log_llm_response("risk_critic", resp)
         content = resp.content if isinstance(resp.content, str) else str(resp.content)
         obj = _extract_json_object(content)
         if obj is None:

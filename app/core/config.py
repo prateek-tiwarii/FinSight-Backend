@@ -2,9 +2,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Existing
+    # LLM provider selection (openrouter | gemini)
+    llm_provider: str = "openrouter"
+    llm_model: str = "nvidia/nemotron-3.5-super-vl:free"
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    llm_timeout_seconds: float = 120.0
+    llm_max_retries: int = 2
+    llm_app_title: str = "FinSight AI"
+    llm_app_referer: str | None = None
+
+    # Gemini (optional fallback provider)
     google_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
+
     max_upload_size_mb: int = 10
 
     # Runtime
@@ -45,6 +56,18 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @property
+    def resolved_llm_provider(self) -> str:
+        provider = (self.llm_provider or "").strip().lower()
+        return provider or "openrouter"
+
+    @property
+    def active_llm_model(self) -> str:
+        """Model id for the currently selected provider."""
+        if self.resolved_llm_provider == "gemini":
+            return self.gemini_model
+        return self.llm_model
 
     @property
     def is_production(self) -> bool:

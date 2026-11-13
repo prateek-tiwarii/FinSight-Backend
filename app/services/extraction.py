@@ -1,14 +1,23 @@
 import base64
 import json
+import logging
 import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ValidationError
 
 from app.core.config import settings
+from app.core.llm import (
+    LLMProviderError,
+    build_chat_model,
+    classify_llm_exception,
+    get_llm_info,
+    log_llm_response,
+)
 from app.models.portfolio import PortfolioExtractionResponse
+
+logger = logging.getLogger(__name__)
 
 
 EXTRACTION_PROMPT = """
@@ -40,21 +49,39 @@ class ExtractionError(Exception):
 
 
 class PortfolioExtractionService:
-    def __init__(self, api_key: str | None = None, model_name: str | None = None):
-        self.api_key = api_key or settings.google_api_key
-        self.model_name = model_name or settings.gemini_model
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model_name: str | None = None,
+        provider: str | None = None,
+    ):
+        # ``api_key`` is accepted for backward compatibility but keys always come
+        # from settings; only ``model_name``/``provider`` overrides are honored.
+        self.api_key = api_key
+        self.model_name = model_name
+        self.provider = provider
 
-    def _build_llm(self) -> ChatGoogleGenerativeAI:
-        if not self.api_key:
-            raise ExtractionError("GOOGLE_API_KEY is not configured")
-        return ChatGoogleGenerativeAI(
-            model=self.model_name,
-            google_api_key=self.api_key,
-            temperature=0,
-        )
+    def _build_llm(self):
+        try:
+            return build_chat_model(
+                temperature=0, model=self.model_name, provider=self.provider
+            )
+        except LLMProviderError:
+            raise
+        except Exception as exc:
+            raise ExtractionError(str(exc)) from exc
+
+    def _image_content(self, data_url: str) -> dict[str, Any]:
+        """Return provider-correct multimodal image content block."""
+        provider = (self.provider or settings.resolved_llm_provider).strip().lower()
+        if provider == "gemini":
+            # langchain-google-genai accepts a string data URL for image_url.
+            return {"type": "image_url", "image_url": data_url}
+        # OpenAI-compatible (OpenRouter) expects an object with a ``url`` key.
+        return {"type": "image_url", "image_url": {"url": data_url}}
 
     def _parse_json(self, content: str) -> dict[str, Any]:
-        text = content.strip()
+        text = (content or "").strip()
         # Strip markdown fences if model includes them despite instructions
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
@@ -66,23 +93,58 @@ class PortfolioExtractionService:
             match = re.search(r"\{.*\}", text, flags=re.DOTALL)
             if not match:
                 raise ExtractionError(f"Model returned non-JSON output: {text[:200]}") from exc
-            data = json.loads(match.group(0))
+            try:
+                data = json.loads(match.group(0))
+            except json.JSONDecodeError as exc2:
+                raise ExtractionError(
+                    f"Model returned malformed JSON: {text[:200]}"
+                ) from exc2
         if not isinstance(data, dict):
             raise ExtractionError("Model output JSON must be an object")
         return data
 
     async def extract(self, image_bytes: bytes, mime_type: str) -> PortfolioExtractionResponse:
+        if not image_bytes:
+            raise ExtractionError("Empty image provided for extraction.")
         llm = self._build_llm()
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         data_url = f"data:{mime_type};base64,{b64}"
         message = HumanMessage(
             content=[
                 {"type": "text", "text": EXTRACTION_PROMPT},
-                {"type": "image_url", "image_url": data_url},
+                self._image_content(data_url),
             ]
         )
-        response = await llm.ainvoke([message])
-        content = response.content if isinstance(response.content, str) else str(response.content)
+        try:
+            response = await llm.ainvoke([message])
+        except Exception as exc:
+            provider_error = classify_llm_exception(exc)
+            logger.warning(
+                "Portfolio extraction LLM call failed (provider=%s model=%s): %s",
+                get_llm_info().provider,
+                get_llm_info().model,
+                provider_error,
+            )
+            raise provider_error from exc
+
+        log_llm_response("portfolio_extraction", response)
+
+        raw_content = response.content
+        if isinstance(raw_content, list):
+            # Some providers return content blocks; join text parts.
+            content = "".join(
+                part.get("text", "")
+                for part in raw_content
+                if isinstance(part, dict)
+            )
+        elif isinstance(raw_content, str):
+            content = raw_content
+        else:
+            content = str(raw_content)
+
+        if not content.strip():
+            raise ExtractionError("Model returned an empty response.")
+
         data = self._parse_json(content)
 
         # Normalize and validate
