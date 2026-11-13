@@ -27,6 +27,9 @@ def test_me_issues_csrf_cookie_and_reports_anonymous():
     assert response.status_code == 200
     assert response.json()["authenticated"] is False
     assert client.cookies.get(settings.csrf_cookie_name)
+    assert response.headers["X-CSRF-Token"] == client.cookies.get(
+        settings.csrf_cookie_name
+    )
 
 
 def test_unsafe_requests_require_csrf_header():

@@ -48,14 +48,20 @@ class CsrfProtectionMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        if is_api and not cookie_token:
-            response.set_cookie(
-                key=settings.csrf_cookie_name,
-                value=generate_csrf_token(),
-                httponly=False,
-                max_age=60 * 60 * 24 * 30,
-                **_cookie_kwargs(),
-            )
+        if is_api:
+            response_token = cookie_token
+            if not response_token:
+                response_token = generate_csrf_token()
+                response.set_cookie(
+                    key=settings.csrf_cookie_name,
+                    value=response_token,
+                    httponly=False,
+                    max_age=60 * 60 * 24 * 30,
+                    **_cookie_kwargs(),
+                )
+            # Cross-origin pages cannot read an API host's cookie through
+            # document.cookie. CORS exposes this non-secret token to the client.
+            response.headers["X-CSRF-Token"] = response_token
         return response
 
 
