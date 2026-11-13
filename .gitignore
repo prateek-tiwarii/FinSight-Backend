@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Test / coverage artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# Local databases (SQLite used for local E2E/testing)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Logs
+*.log
+
+# Type checker / build caches
+.mypy_cache/
+.pytype/
+*.tsbuildinfo
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# NOTE: keep these tracked (do NOT ignore):
+#   alembic/versions/*.py   (migrations)
+#   requirements.txt, requirements-dev.txt
+#   .env.example

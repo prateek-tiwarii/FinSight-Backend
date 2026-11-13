@@ -1,0 +1,34 @@
+fastapi==0.162.5
+uvicorn[standard]==0.54.0
+pydantic==2.14.3
+pydantic-settings==2.16.2
+python-dotenv==1.2.4
+python-multipart==0.0.33
+email-validator==2.3.0
+
+# Database / migrations
+SQLAlchemy==2.1.8
+alembic==1.20.1
+psycopg[binary]==3.3.9
+psycopg-pool==3.3.3
+
+# Authentication
+argon2-cffi==25.1.0
+
+# Agents / market data
+langgraph==1.2.20
+langgraph-checkpoint==4.3.1
+langgraph-checkpoint-postgres==3.2.0
+langchain==1.5.0
+langchain-core==1.8.0
+langchain-google-genai==4.5.0
+google-genai==3.2.0
+yfinance==1.8.0
+pandas==3.1.1
+numpy==2.5.4
+feedparser==6.0.14
+beautifulsoup4==4.15.0
+lxml==6.1.3
+requests==2.34.2
+httpx==0.28.1
+pillow==13.0.0
